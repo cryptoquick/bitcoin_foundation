@@ -21,8 +21,7 @@ use std::str::FromStr;
 
 use amplify::Wrapper;
 use bitcoin::hashes::Hash;
-use bitcoin::psbt::TapTree;
-use bitcoin::util::taproot::{LeafVersion, TapBranchHash, TapLeafHash, TaprootBuilder};
+use bitcoin::taproot::{LeafVersion, TapLeafHash, TapTree, TaprootBuilder};
 use bitcoin::Script;
 
 use crate::types::IntoNodeHash;
@@ -300,7 +299,7 @@ pub trait Branch {
     /// DFS ordering.
     fn dfs_ordering(&self) -> DfsOrdering;
     /// Computes branch hash of this branch node.
-    fn branch_hash(&self) -> TapBranchHash;
+    fn branch_hash(&self) -> TapNodeHash;
 }
 
 /// Trait for taproot tree node types.
@@ -351,8 +350,8 @@ impl Branch for BranchNode {
 
     fn dfs_ordering(&self) -> DfsOrdering { self.dfs_ordering }
 
-    fn branch_hash(&self) -> TapBranchHash {
-        TapBranchHash::from_node_hashes(
+    fn branch_hash(&self) -> TapNodeHash {
+        TapNodeHash::from_node_hashes(
             self.as_left_node().node_hash(),
             self.as_right_node().node_hash(),
         )
@@ -731,7 +730,7 @@ impl Display for TreeNode {
 /// information about its childen.
 #[derive(Clone, Ord, PartialOrd, Eq, PartialEq, Hash, Debug)]
 pub struct PartialBranchNode {
-    hash: TapBranchHash,
+    hash: TapNodeHash,
     first: Option<Box<PartialTreeNode>>,
     second: Option<Box<PartialTreeNode>>,
 }
@@ -768,14 +767,14 @@ impl Branch for PartialBranchNode {
         }
     }
 
-    fn branch_hash(&self) -> TapBranchHash { self.hash }
+    fn branch_hash(&self) -> TapNodeHash { self.hash }
 }
 
 impl PartialBranchNode {
     /// Constructs partial branch node without child node information using the
     /// provided node hash data. If the child nodes are not pushed later, this
     /// will correspond to a hidden tree node.
-    pub fn with(hash: TapBranchHash) -> Self {
+    pub fn with(hash: TapNodeHash) -> Self {
         PartialBranchNode {
             hash,
             first: None,
@@ -835,7 +834,7 @@ impl PartialTreeNode {
 
     /// Constructs branch node without child information. To provide information
     /// about child nodes use [`PartialBranchNode::push_child`] method.
-    pub fn with_branch(hash: TapBranchHash, depth: u8) -> PartialTreeNode {
+    pub fn with_branch(hash: TapNodeHash, depth: u8) -> PartialTreeNode {
         PartialTreeNode::Branch(PartialBranchNode::with(hash), depth)
     }
 
@@ -1481,7 +1480,7 @@ mod test {
     use amplify::Wrapper;
     use bitcoin::blockdata::opcodes::all;
     use bitcoin::hashes::hex::FromHex;
-    use bitcoin::util::taproot::TaprootBuilder;
+    use bitcoin::taproot::TaprootBuilder;
 
     use super::*;
 

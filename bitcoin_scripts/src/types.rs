@@ -15,19 +15,17 @@ use std::io::{self, Read, Write};
 
 use amplify::hex::ToHex;
 use amplify::{hex, Wrapper};
+use bitcoin::address::WitnessVersion;
 use bitcoin::blockdata::script;
 use bitcoin::blockdata::script::*;
 use bitcoin::blockdata::witness::Witness;
 use bitcoin::hashes::{sha256, Hash};
-use bitcoin::schnorr::TweakedPublicKey;
-use bitcoin::util::address::WitnessVersion;
-use bitcoin::util::taproot::{
-    ControlBlock, LeafVersion, TapBranchHash, TapLeafHash, TaprootError, TAPROOT_ANNEX_PREFIX,
+use bitcoin::key::TweakedPublicKey;
+use bitcoin::taproot::{
+    ControlBlock, LeafVersion, TapLeafHash, TaprootError, TAPROOT_ANNEX_PREFIX,
 };
-use bitcoin::{
-    consensus, Address, Network, PubkeyHash, SchnorrSig, SchnorrSigError, ScriptHash, WPubkeyHash,
-    WScriptHash,
-};
+use bitcoin::{consensus, Address, Network, PubkeyHash, ScriptHash, WPubkeyHash, WScriptHash};
+use secp256k1::schnorr;
 
 /// Script whose knowledge and satisfaction is required for spending some
 /// specific transaction output. This is the deepest nested version of Bitcoin
@@ -49,7 +47,7 @@ use bitcoin::{
 )]
 #[display("{0}", alt = "{0:x}")]
 #[wrapper(LowerHex, UpperHex)]
-pub struct LockScript(Script);
+pub struct LockScript(ScriptBuf);
 
 /// A representation of `scriptPubkey` data used during SegWit signing procedure
 #[derive(
@@ -62,7 +60,7 @@ pub struct LockScript(Script);
 )]
 #[display("{0}", alt = "{0:x}")]
 #[wrapper(LowerHex, UpperHex)]
-pub struct ScriptCode(Script);
+pub struct ScriptCode(ScriptBuf);
 
 /// A content of `scriptPubkey` from a transaction output
 #[derive(
@@ -75,7 +73,7 @@ pub struct ScriptCode(Script);
 )]
 #[display("{0}", alt = "{0:x}")]
 #[wrapper(LowerHex, UpperHex)]
-pub struct PubkeyScript(Script);
+pub struct PubkeyScript(ScriptBuf);
 
 impl PubkeyScript {
     /// Generates an address matching the script and given network, if possible.
@@ -91,11 +89,11 @@ impl PubkeyScript {
 }
 
 impl From<PubkeyHash> for PubkeyScript {
-    fn from(pkh: PubkeyHash) -> Self { Script::new_p2pkh(&pkh).into() }
+    fn from(pkh: PubkeyHash) -> Self { ScriptBuf::new_p2pkh(&pkh).into() }
 }
 
 impl From<WPubkeyHash> for PubkeyScript {
-    fn from(wpkh: WPubkeyHash) -> Self { Script::new_v0_p2wpkh(&wpkh).into() }
+    fn from(wpkh: WPubkeyHash) -> Self { ScriptBuf::new_v0_p2wpkh(&wpkh).into() }
 }
 
 /// A content of `scriptSig` from a transaction input
@@ -109,7 +107,7 @@ impl From<WPubkeyHash> for PubkeyScript {
 )]
 #[display("{0}", alt = "{0:x}")]
 #[wrapper(LowerHex, UpperHex)]
-pub struct SigScript(Script);
+pub struct SigScript(ScriptBuf);
 
 /// Errors for [`TaprootWitness`] construction from [`Witness`] and byte
 /// representations
@@ -153,7 +151,7 @@ pub enum TaprootWitness {
     /// Public key path spending
     PubkeySpending {
         /// BIP-341 signature
-        sig: SchnorrSig,
+        sig: schnorr::Signature,
         /// Optional annex data (annex prefix is removed)
         annex: Option<Box<[u8]>>,
     },
@@ -300,7 +298,7 @@ impl consensus::Decodable for TaprootWitness {
 )]
 #[display("{0}", alt = "{0:x}")]
 #[wrapper(LowerHex, UpperHex)]
-pub struct RedeemScript(Script);
+pub struct RedeemScript(ScriptBuf);
 
 impl RedeemScript {
     /// Computes script commitment hash which participates in [`PubkeyScript`]
@@ -309,7 +307,7 @@ impl RedeemScript {
 
     /// Generates [`PubkeyScript`] matching given `redeemScript`
     #[inline]
-    pub fn to_p2sh(&self) -> PubkeyScript { Script::new_p2sh(&self.script_hash()).into() }
+    pub fn to_p2sh(&self) -> PubkeyScript { ScriptBuf::new_p2sh(&self.script_hash()).into() }
 }
 
 impl From<RedeemScript> for SigScript {
@@ -339,7 +337,7 @@ impl From<RedeemScript> for SigScript {
 )]
 #[display("{0}", alt = "{0:x}")]
 #[wrapper(LowerHex, UpperHex)]
-pub struct WitnessScript(Script);
+pub struct WitnessScript(ScriptBuf);
 
 impl WitnessScript {
     /// Computes script commitment which participates in [`Witness`] or
@@ -350,7 +348,7 @@ impl WitnessScript {
     /// Generates [`PubkeyScript`] matching given `witnessScript` for native
     /// SegWit outputs.
     #[inline]
-    pub fn to_p2wsh(&self) -> PubkeyScript { Script::new_v0_p2wsh(&self.script_hash()).into() }
+    pub fn to_p2wsh(&self) -> PubkeyScript { ScriptBuf::new_v0_p2wsh(&self.script_hash()).into() }
 
     /// Generates [`PubkeyScript`] matching given `witnessScript` for legacy
     /// P2WSH-in-P2SH outputs.
@@ -360,7 +358,7 @@ impl WitnessScript {
 
 impl From<WitnessScript> for RedeemScript {
     fn from(witness_script: WitnessScript) -> Self {
-        RedeemScript(Script::new_v0_p2wsh(&witness_script.script_hash()))
+        RedeemScript(ScriptBuf::new_v0_p2wsh(&witness_script.script_hash()))
     }
 }
 
@@ -431,7 +429,7 @@ impl LeafScript {
 )]
 #[display("{0}", alt = "{0:x}")]
 #[wrapper(LowerHex, UpperHex)]
-pub struct TapScript(Script);
+pub struct TapScript(ScriptBuf);
 
 impl From<LockScript> for TapScript {
     fn from(lock_script: LockScript) -> Self { TapScript(lock_script.to_inner()) }
@@ -581,13 +579,6 @@ pub trait IntoNodeHash {
 
 impl IntoNodeHash for TapLeafHash {
     /// Converts this leaf hash into a generic SHA256 hash value, which can
-    /// be used to construct hidden nodes in the tap tree.
-    #[inline]
-    fn into_node_hash(self) -> TapNodeHash { TapNodeHash::from_inner(self.into_inner()) }
-}
-
-impl IntoNodeHash for TapBranchHash {
-    /// Converts this branch hash into a generic SHA256 hash value, which can
     /// be used to construct hidden nodes in the tap tree.
     #[inline]
     fn into_node_hash(self) -> TapNodeHash { TapNodeHash::from_inner(self.into_inner()) }
